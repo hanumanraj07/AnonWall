@@ -22,6 +22,17 @@ const TAG_OPTIONS = [
   { value: "random", label: "Random Thoughts" },
 ];
 
+function mapRowToPost(row) {
+  return {
+    id: row.id,
+    text: row.text,
+    tag: row.tag,
+    tagLabel: row.tag_label,
+    createdAt: new Date(row.created_at).getTime(),
+    reactions: row.reactions || {},
+  };
+}
+
 function formatTimeAgo(timestamp) {
   const now = Date.now();
   const diffMs = now - timestamp;
@@ -99,35 +110,46 @@ function App() {
     }
   }, [theme]);
 
-  // Load posts from Supabase
-  useEffect(() => {
-    async function fetchPosts() {
-      setLoading(true);
-      const { data, error } = await supabase
-        .from("posts")
-        .select("*")
-        .order("created_at", { ascending: false });
+  // 🔁 Fetch posts function
+  async function fetchPosts() {
+    setLoading(true);
+    const { data, error } = await supabase
+      .from("posts")
+      .select("*")
+      .order("created_at", { ascending: false });
 
-      if (error) {
-        console.error("Error loading posts:", error);
-        setLoading(false);
-        return;
-      }
-
-      const mapped = (data || []).map((row) => ({
-        id: row.id,
-        text: row.text,
-        tag: row.tag,
-        tagLabel: row.tag_label,
-        createdAt: new Date(row.created_at).getTime(),
-        reactions: row.reactions || {},
-      }));
-
-      setPosts(mapped);
+    if (error) {
+      console.error("Error loading posts:", error);
       setLoading(false);
+      return;
     }
 
-    fetchPosts();
+    const mapped = (data || []).map(mapRowToPost);
+    setPosts(mapped);
+    setLoading(false);
+  }
+
+  // Load posts once + poll every 5 seconds
+  useEffect(() => {
+    let isMounted = true;
+
+    async function initialLoad() {
+      await fetchPosts();
+    }
+
+    initialLoad();
+
+    const intervalId = setInterval(() => {
+      if (isMounted) {
+        fetchPosts();
+      }
+    }, 5000); // every 5 seconds
+
+    return () => {
+      isMounted = false;
+      clearInterval(intervalId);
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
   const sortedPosts = useMemo(() => sortPosts(posts, sort), [posts, sort]);
@@ -151,18 +173,14 @@ function App() {
       return acc;
     }, {});
 
-    const { data, error } = await supabase
-      .from("posts")
-      .insert([
-        {
-          text: trimmed,
-          tag: tagMeta.value,
-          tag_label: tagMeta.label,
-          reactions,
-        },
-      ])
-      .select()
-      .single();
+    const { error } = await supabase.from("posts").insert([
+      {
+        text: trimmed,
+        tag: tagMeta.value,
+        tag_label: tagMeta.label,
+        reactions,
+      },
+    ]);
 
     if (error) {
       console.error("Error saving post:", error);
@@ -170,18 +188,9 @@ function App() {
       return;
     }
 
-    const newPost = {
-      id: data.id,
-      text: data.text,
-      tag: data.tag,
-      tagLabel: data.tag_label,
-      createdAt: new Date(data.created_at).getTime(),
-      reactions: data.reactions || {},
-    };
-
-    // Add new post to top of list
-    setPosts((prev) => [newPost, ...prev]);
     setText("");
+    // refresh list right after posting
+    fetchPosts();
   };
 
   const handleReact = async (postId, reactionId) => {
@@ -207,7 +216,7 @@ function App() {
 
     if (error) {
       console.error("Error updating reactions:", error);
-      // (Optional) You could revert UI here if needed
+      // optional: revert UI if you want
     }
   };
 
@@ -325,7 +334,9 @@ function App() {
           <div className="meta-info">
             <span className="meta-dot"></span>
             <span>
-              {loading ? "Loading posts..." : postCountLabel}
+              {loading && posts.length === 0
+                ? "Loading posts..."
+                : postCountLabel}
             </span>
           </div>
         </section>
