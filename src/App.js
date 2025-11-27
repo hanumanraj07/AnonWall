@@ -3,6 +3,9 @@ import "./App.css";
 import { supabase } from "./supabaseClient";
 
 const THEME_KEY = "anonWallTheme";
+const USER_ID_KEY = "anonWallUserId";
+const USER_NAME_KEY = "anonWallUserName";
+const USER_COLOR_KEY = "anonWallUserColor";
 
 const REACTIONS = [
   { id: "heart", emoji: "❤️", label: "Love" },
@@ -22,6 +25,58 @@ const TAG_OPTIONS = [
   { value: "random", label: "Random Thoughts" },
 ];
 
+const NICKNAMES = [
+  "Silent Fox",
+  "Midnight Star",
+  "Hidden Lotus",
+  "Faded Echo",
+  "Secret Nebula",
+  "Gentle Storm",
+  "Quiet Ember",
+  "Moon Walker",
+  "Soft Comet",
+  "Lost Prism",
+];
+
+const COLORS = [
+  "#6366F1",
+  "#EC4899",
+  "#F97316",
+  "#22C55E",
+  "#06B6D4",
+  "#A855F7",
+  "#FACC15",
+  "#FB7185",
+];
+
+// create or load this browser's anonymous identity
+function getOrCreateUserIdentity() {
+  try {
+    let id = localStorage.getItem(USER_ID_KEY);
+    let name = localStorage.getItem(USER_NAME_KEY);
+    let color = localStorage.getItem(USER_COLOR_KEY);
+
+    if (!id || !name || !color) {
+      id = "anon-" + Math.random().toString(36).slice(2, 10);
+      name = NICKNAMES[Math.floor(Math.random() * NICKNAMES.length)];
+      color = COLORS[Math.floor(Math.random() * COLORS.length)];
+
+      localStorage.setItem(USER_ID_KEY, id);
+      localStorage.setItem(USER_NAME_KEY, name);
+      localStorage.setItem(USER_COLOR_KEY, color);
+    }
+
+    return { id, name, color };
+  } catch {
+    // fallback if localStorage fails
+    return {
+      id: "anon-" + Math.random().toString(36).slice(2, 10),
+      name: "Anon",
+      color: "#6366F1",
+    };
+  }
+}
+
 function mapRowToPost(row) {
   return {
     id: row.id,
@@ -30,6 +85,9 @@ function mapRowToPost(row) {
     tagLabel: row.tag_label,
     createdAt: new Date(row.created_at).getTime(),
     reactions: row.reactions || {},
+    userId: row.user_id || null,
+    userName: row.user_name || "anon",
+    userColor: row.user_color || "#4B5563",
   };
 }
 
@@ -86,6 +144,7 @@ function App() {
   const [text, setText] = useState("");
   const [tag, setTag] = useState("general");
   const [loading, setLoading] = useState(false);
+  const [user] = useState(getOrCreateUserIdentity); // our anon identity
   const maxLength = 400;
 
   // Load theme from localStorage
@@ -110,7 +169,6 @@ function App() {
     }
   }, [theme]);
 
-  // 🔁 Fetch posts function
   async function fetchPosts() {
     setLoading(true);
     const { data, error } = await supabase
@@ -129,7 +187,7 @@ function App() {
     setLoading(false);
   }
 
-  // Load posts once + poll every 5 seconds
+  // Load + poll
   useEffect(() => {
     let isMounted = true;
 
@@ -143,7 +201,7 @@ function App() {
       if (isMounted) {
         fetchPosts();
       }
-    }, 5000); // every 5 seconds
+    }, 5000);
 
     return () => {
       isMounted = false;
@@ -179,6 +237,9 @@ function App() {
         tag: tagMeta.value,
         tag_label: tagMeta.label,
         reactions,
+        user_id: user.id,
+        user_name: user.name,
+        user_color: user.color,
       },
     ]);
 
@@ -189,8 +250,7 @@ function App() {
     }
 
     setText("");
-    // refresh list right after posting
-    fetchPosts();
+    fetchPosts(); // refresh
   };
 
   const handleReact = async (postId, reactionId) => {
@@ -202,7 +262,6 @@ function App() {
       [reactionId]: (post.reactions?.[reactionId] || 0) + 1,
     };
 
-    // Optimistic UI update
     setPosts((prev) =>
       prev.map((p) =>
         p.id === postId ? { ...p, reactions: newReactions } : p
@@ -216,7 +275,6 @@ function App() {
 
     if (error) {
       console.error("Error updating reactions:", error);
-      // optional: revert UI if you want
     }
   };
 
@@ -243,7 +301,9 @@ function App() {
         </div>
 
         <div className="header-actions">
-          <div className="pill">🔒 No sign-up • 100% anonymous</div>
+          <div className="pill">
+            🔒 No sign-up • 100% anonymous
+          </div>
           <button className="btn" type="button" onClick={handleThemeToggle}>
             <span className="icon">{theme === "dark" ? "🌙" : "☀️"}</span>
             <span className="label">{theme === "dark" ? "Dark" : "Light"}</span>
@@ -285,10 +345,7 @@ function App() {
                   </select>
 
                   <div className="hint">
-                    🧡{" "}
-                    <span>
-                      Be kind. Someone out there is you on a different day.
-                    </span>
+                    🧡 <span>Be kind. Someone out there is you on a different day.</span>
                   </div>
                 </div>
 
@@ -353,36 +410,59 @@ function App() {
               No confessions yet. Be the first to share something anonymously.
             </div>
           ) : (
-            sortedPosts.map((post) => (
-              <article key={post.id} className="post">
-                <div className="post-tag">
-                  <span className="dot"></span>
-                  {post.tagLabel || "General"}
-                </div>
-                <div className="post-text">{post.text}</div>
-                <div className="post-meta">
-                  <div className="post-time">
-                    <span>👤 anon</span>
-                    <span className="dot"></span>
-                    <span>{formatTimeAgo(post.createdAt)}</span>
+            sortedPosts.map((post) => {
+              const isYou = post.userId && post.userId === user.id;
+              const initials = (post.userName || "A")
+                .split(" ")
+                .map((p) => p[0])
+                .join("")
+                .slice(0, 2)
+                .toUpperCase();
+
+              return (
+                <article key={post.id} className="post">
+                  <div className="post-header">
+                    <div className="avatar" style={{ background: post.userColor }}>
+                      {initials}
+                    </div>
+                    <div className="post-header-text">
+                      <div className="post-identity">
+                        <span className="post-name">
+                          {post.userName || "anon"}
+                        </span>
+                        {isYou && <span className="you-pill">you</span>}
+                      </div>
+                      <div className="post-tag">
+                        <span className="dot"></span>
+                        {post.tagLabel || "General"}
+                      </div>
+                    </div>
                   </div>
-                  <div className="reactions">
-                    {REACTIONS.map((r) => (
-                      <button
-                        key={r.id}
-                        type="button"
-                        className="reaction-button"
-                        onClick={() => handleReact(post.id, r.id)}
-                      >
-                        <span className="emoji">{r.emoji}</span>
-                        <span>{r.label}</span>
-                        <span>{post.reactions?.[r.id] || 0}</span>
-                      </button>
-                    ))}
+
+                  <div className="post-text">{post.text}</div>
+
+                  <div className="post-meta">
+                    <div className="post-time">
+                      <span>{formatTimeAgo(post.createdAt)}</span>
+                    </div>
+                    <div className="reactions">
+                      {REACTIONS.map((r) => (
+                        <button
+                          key={r.id}
+                          type="button"
+                          className="reaction-button"
+                          onClick={() => handleReact(post.id, r.id)}
+                        >
+                          <span className="emoji">{r.emoji}</span>
+                          <span>{r.label}</span>
+                          <span>{post.reactions?.[r.id] || 0}</span>
+                        </button>
+                      ))}
+                    </div>
                   </div>
-                </div>
-              </article>
-            ))
+                </article>
+              );
+            })
           )}
         </section>
       </main>
